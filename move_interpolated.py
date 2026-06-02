@@ -10,7 +10,6 @@ login = "login" # Логин
 password = "password" # Пароль
 manipulator = M13(host, client_id, login, password)
 
-# position = MoveCoordinatesParamsPosition(0.71, 0.0, 0.27)
 orientation = MoveCoordinatesParamsOrientation(0, 0, 0, 1.0)
 
 
