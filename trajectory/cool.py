@@ -3,8 +3,13 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from skimage.morphology import skeletonize
 
+line1 = "Инно"
+GAP = 10  # доп. отступ между симфолами
+line2 = "2026"
 FONT_PATH = "ofont.ru_Buira.ttf"
-FONT_SIZE = 170
+FONT_SIZE1   = 250
+FONT_SIZE2   = 215
+LETTER_SPACING = 20  # доп. пикселей между буквами line1
 IMG_WIDTH = 800
 IMG_HEIGHT = 600
 IMG_WIDTH_MM = 80
@@ -12,17 +17,35 @@ IMG_HEIGHT_MM = 60
 RATIO_X = IMG_WIDTH / IMG_WIDTH_MM *1000 #px/m
 RATIO_Y = IMG_HEIGHT / IMG_HEIGHT_MM *1000 #px/m
 EPS = 0.5/1000 #MM
-text      = "Инно 2026"
 
 # ---------- рендер буквы ----------
 img  = Image.new("RGB", (IMG_WIDTH, IMG_HEIGHT), (255, 255, 255))
 draw = ImageDraw.Draw(img)
-font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
 
-bbox = draw.textbbox((0, 0), text, font=font)
-x = (IMG_WIDTH - (bbox[2] - bbox[0])) // 2 - bbox[0]
-y = (IMG_HEIGHT - (bbox[3] - bbox[1])) // 2 - bbox[1]
-draw.text((x, y), text, font=font, fill=(0, 0, 0))
+
+font1 = ImageFont.truetype(FONT_PATH, FONT_SIZE1)
+font2 = ImageFont.truetype(FONT_PATH, FONT_SIZE2)
+
+# Считаем ширину line1 с учётом интервала
+widths = [draw.textbbox((0,0), ch, font=font1)[2] for ch in line1]
+total_w1 = sum(widths) + LETTER_SPACING * (len(line1) - 1)
+
+bbox2 = draw.textbbox((0, 0), line2, font=font2)
+total_w2 = bbox2[2] - bbox2[0]
+
+h1 = draw.textbbox((0,0), line1, font=font1)[3]  # высота первой строки
+h2 = bbox2[3] - bbox2[1]
+
+total_h = h1 + GAP + h2
+y1 = (IMG_HEIGHT - total_h) // 2
+# Рисуем line1 побуквенно
+x = (IMG_WIDTH - total_w1) // 2
+for ch, w in zip(line1, widths):
+    draw.text((x, y1), ch, font=font1, fill=(0, 0, 0))
+    x += w + LETTER_SPACING
+# Рисуем line2 целиком
+x2 = (IMG_WIDTH - total_w2) // 2
+draw.text((x2, y1 + h1 + GAP), line2, font=font2, fill=(0, 0, 0))
 
 cv_img = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
 
@@ -32,7 +55,7 @@ skel    = skeletonize((blurred < 200).astype(np.uint8))
 
 # Обрезаем шпоры: 20 раз удаляем точки с единственным соседом
 s = skel.copy().astype(np.uint8)
-for _ in range(5):
+for _ in range(3):
     nbs = sum(np.roll(np.roll(s, dy, 0), dx, 1)
               for dy in (-1,0,1) for dx in (-1,0,1) if (dy,dx) != (0,0))
     s[nbs == 1] = 0
@@ -152,21 +175,114 @@ def merge_segments(segments, min_len):
 for _ in range(3):
     segments = merge_segments(segments, MIN_LEN)
 
-# (row, col) → (x, y)
-path_segments = [[(int(c), int(r)) for r, c in seg] for seg in segments]
 
-print(f"Сегментов: {len(path_segments)}")
-for i, seg in enumerate(path_segments):
-    print(f"  [{i}] точек: {len(seg)}  {seg[0]} → {seg[-1]}")
+print(f"Сегментов: {len(segments)}")
+# for i, seg in enumerate(segments):
+#     print(f"  [{i}] точек: {len(seg)}  {seg[0]} → {seg[-1]}")
+
+
+#? Обединение
+STITCH_DIST    = 8   # макс. расстояние между концом и началом
+STITCH_COS     = 0.7 # минимальный косинус между направлениями (0.8 ≈ 37°)
+DIRECTION_PTS  = 8   # по скольким точкам считаем направление
+
+def direction(pts):
+    """Вектор от первой к последней точке среди pts."""
+    dr = pts[-1][0] - pts[0][0]
+    dc = pts[-1][1] - pts[0][1]
+    n  = (dr**2 + dc**2) ** 0.5
+    return (dr/n, dc/n) if n > 0 else (0, 0)
+
+def cos_sim(a, b):
+    return a[0]*b[0] + a[1]*b[1]
+def dist(a, b):
+    return max(abs(a[0]-b[0]), abs(a[1]-b[1]))
+def stitch_segments(segments):
+    result = list(segments)
+    changed = True
+    while changed:
+        changed = False
+        for i in range(len(result)):
+            for j in range(len(result)):
+                if i == j:
+                    continue
+                a, b = result[i], result[j]
+                if dist(a[-1], b[0]) <= STITCH_DIST and \
+                   cos_sim(direction(a[-DIRECTION_PTS:]), direction(b[:DIRECTION_PTS])) >= STITCH_COS:
+                    merged = a + b
+                elif dist(a[-1], b[-1]) <= STITCH_DIST and \
+                     cos_sim(direction(a[-DIRECTION_PTS:]), direction(b[-DIRECTION_PTS:][::-1])) >= STITCH_COS:
+                    merged = a + b[::-1]
+                elif dist(a[0], b[-1]) <= STITCH_DIST and \
+                     cos_sim(direction(a[:DIRECTION_PTS][::-1]), direction(b[-DIRECTION_PTS:])) >= STITCH_COS:
+                    merged = b + a
+                elif dist(a[0], b[0]) <= STITCH_DIST and \
+                     cos_sim(direction(a[:DIRECTION_PTS][::-1]), direction(b[:DIRECTION_PTS])) >= STITCH_COS:
+                    merged = b[::-1] + a
+                else:
+                    continue
+                result = [merged if k == i else v
+                          for k, v in enumerate(result) if k != j]
+                changed = True
+                break
+            if changed:
+                break
+    return result
+
+segments = stitch_segments(segments)
+
+print(f"Стало сегментов: {len(segments)}")
+# for i, seg in enumerate(segments):
+#     print(f"  [{i}] точек: {len(seg)}  {seg[0]} → {seg[-1]}")
+#?
+
+# ? Сортировка сегментов
+
+import math
+def proj(pt):
+    r, c = pt
+    return c * math.cos(a) + r * math.sin(a)
+def sort_key(s):
+    r, c = s[0]  # первая точка (уже развёрнуто началом вверх)
+    return c * math.cos(a) + r * math.sin(a)  # проекция на повёрнутую ось X
+
+SORT_ANGLE_DEG = 70  # угол наклона по часовой стрелке
+a = math.radians(SORT_ANGLE_DEG)
+segments = [s if proj(s[0]) <= proj(s[-1]) else s[::-1] for s in segments]
+
+SORT_ANGLE_DEG = 15  # угол наклона по часовой стрелке
+a = math.radians(SORT_ANGLE_DEG)
+# Y-граница между строками (середина между y1+h1 и y1+h1+gap)
+y_split = y1 + h1 + GAP // 2
+seg_top = [s for s in segments if min(r for r, c in s) < y_split]
+seg_bot = [s for s in segments if min(r for r, c in s) >= y_split]
+seg_top.sort(key=sort_key)
+
+print("Дополнительно объединил цифры...")
+STITCH_COS     = -0.2
+seg_bot = stitch_segments(seg_bot)
+seg_bot.sort(key=sort_key)
+
+print(f"Верхние: {len(seg_top)}, нижние: {len(seg_bot)}")
+path_segments = seg_top + seg_bot
+
+# path_segments = [s if proj(s[0]) <= proj(s[-1]) else s[::-1] for s in path_segments]
+# (row, col) → (x, y)
+path_segments = [[(int(c), int(r)) for r, c in seg] for seg in path_segments]#[:11]
+# ?
 
 
 # ---------- визуализация ----------
+import matplotlib.pyplot as plt
+cmap = plt.cm.rainbow
+
 vis = cv_img.copy()
 vis[skel] = (40, 40, 40)
 
-rng = np.random.default_rng(42)
-for seg in path_segments:
-    color = rng.integers(80, 256, 3).tolist()
+COLOR_STEP = 1
+for i, seg in enumerate(path_segments):
+    color_f = cmap((i * COLOR_STEP / max(len(path_segments) - 1, 1)) % 1.0)
+    color   = tuple(int(c * 255) for c in color_f[2::-1])  # RGB→BGR
     for x, y in seg:
         cv2.circle(vis, (x, y), 2, color, -1)
     cv2.circle(vis, seg[0],  5, (0, 255, 0), -1)
@@ -195,14 +311,14 @@ for i, segment in enumerate(path):
     coords_segments.append(coords_segment)
 
 print("\nСтало сегментов:", len(coords_segments))
-for i in coords_segments:
-    print(len(i), "точек:")
-    for j in range(0, min(len(i), 3)):
-        print(f"x = {i[j][0]}, y = {i[j][1]}")
-    if len(i) > 10:
-        print("...")
-# cv2.imshow("Сегменты", vis)
-# cv2.waitKey(0)
+# for i in coords_segments:
+#     print(len(i), "точек:")
+#     for j in range(0, min(len(i), 3)):
+#         print(f"x = {i[j][0]}, y = {i[j][1]}")
+#     if len(i) > 10:
+#         print("...")
+cv2.imshow("Сегменты", vis)
+cv2.waitKey(0)
 
 import matplotlib.pyplot as plt
 
@@ -216,8 +332,8 @@ for seg in coords_segments:
     xs, ys = zip(*seg)
     ax.scatter(xs, ys, s=2)
 
-for i in range(21):
-    print(len(coords_segments[i]))
+# for i in range(21):
+#     print(len(coords_segments[i]))
 
 import csv
 import os
