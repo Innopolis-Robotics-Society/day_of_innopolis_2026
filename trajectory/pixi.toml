@@ -1,0 +1,16 @@
+[workspace]
+authors = ["CatRespect <alexej.feofanov@mail.ru>"]
+channels = ["conda-forge"]
+name = "Манипулятор хихихаха"
+platforms = ["win-64", "linux-64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+pillow = ">=10.0"
+scikit-image = ">=0.26.0,<0.27"
+matplotlib = ">=3.10.9,<4"
+
+[pypi-dependencies]
+opencv-python = ">=4.9"
