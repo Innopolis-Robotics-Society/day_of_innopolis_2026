@@ -201,8 +201,8 @@ for i in coords_segments:
         print(f"x = {i[j][0]}, y = {i[j][1]}")
     if len(i) > 10:
         print("...")
-cv2.imshow("Сегменты", vis)
-cv2.waitKey(0)
+# cv2.imshow("Сегменты", vis)
+# cv2.waitKey(0)
 
 import matplotlib.pyplot as plt
 
@@ -216,5 +216,17 @@ for seg in coords_segments:
     xs, ys = zip(*seg)
     ax.scatter(xs, ys, s=2)
 
-plt.tight_layout()
+for i in range(21):
+    print(len(coords_segments[i]))
+
+import csv
+import os
+for idx, trajectory in enumerate(coords_segments):
+    filename = os.path.join("./", f"trajectory_{idx}.csv")
+    with open(filename, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["x", "y"])
+        writer.writerows(trajectory)
+# plt.tight_layout()
 plt.show()
+# plt.imsave("f.png", ax)

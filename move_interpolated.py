@@ -13,23 +13,38 @@ manipulator = M13(host, client_id, login, password)
 orientation = MoveCoordinatesParamsOrientation(0, 0, 0, 1.0)
 
 
-h = 0.15
-x = 0.75
-y = 0.0
+h = 0.1585
+# h = 0.175
+x = 0.65
+y = 0.00
 vMove = 0.1
 vWrite = 0.4
 af = 0.1
-p = [MoveCoordinatesParamsPosition(x, y, h), 
-     MoveCoordinatesParamsPosition(x + 0.01, y, h), 
-     MoveCoordinatesParamsPosition(x + 0.01, y - 0.01, h), 
-     MoveCoordinatesParamsPosition(x, y - 0.01, h)]
 
-pf = MoveCoordinatesParamsPosition(x, y, h+0.1)
+import csv
+import glob
+import os
+
+def load_trajectories(folder="trajectory"):
+    trajectories = []
+    files = sorted(glob.glob(os.path.join(folder, "*.csv")))
+    for filename in files:
+        trajectory = []
+        with open(filename, "r") as f:
+            reader = csv.reader(f)
+            next(reader)
+            for row in reader:
+                trajectory.append([
+                    float(row[0]),
+                    float(row[1])
+                ])
+        trajectories.append(trajectory)
+    return trajectories
 
 def interpolate_circle(R: float, xc: float, yc: float, z: float, delta: float):
     pos = []
     for i in range(int(360/delta)):
-        pos.append((round(xc + R*math.cos(math.radians(delta*i)), 4), round(yc + R*math.sin(math.radians(delta*i)), 4), z))
+        pos.append((xc + R*math.cos(math.radians(delta*i)), yc + R*math.sin(math.radians(delta*i)), z))
     return pos
 
 def interpolate_spiral(alpha: float, Rmax: float, xc: float, yc: float, z: float, delta: float):
@@ -44,15 +59,18 @@ async def make_manipulator_connection():
     try:
         manipulator.connect()
         manipulator.get_control()
-        # poses = interpolate_spiral(0.025, 0.1, x, y, h, 1)
-        poses = interpolate_circle(0.05, x, y, h, 1)
-        manipulator.move_to_coordinates(MoveCoordinatesParamsPosition(*poses[0][:2], h+0.1), orientation, velocity_scaling_factor=vMove, acceleration_scaling_factor=af)
-        manipulator.move_to_coordinates(MoveCoordinatesParamsPosition(*poses[0]), orientation, velocity_scaling_factor=vMove, acceleration_scaling_factor=af)
-        manipulator.set_servo_pose_mode()
-        for pos in poses[1:]:
-            manipulator.stream_coordinates(MoveCoordinatesParamsPosition(*pos), orientation)
-            time.sleep(0.04)
-        manipulator.move_to_coordinates(pf, orientation, velocity_scaling_factor=vMove, acceleration_scaling_factor=af)
+        poseses = load_trajectories()
+        for poss in poseses:
+            poses = []
+            for i in range(len(poss)):
+                poses.append([poss[i][0] + x, -poss[i][1] + y, h])
+            manipulator.move_to_coordinates(MoveCoordinatesParamsPosition(*poses[0][:2], h+0.015), orientation, velocity_scaling_factor=vWrite, acceleration_scaling_factor=af)
+            manipulator.move_to_coordinates(MoveCoordinatesParamsPosition(*poses[0]), orientation, velocity_scaling_factor=vMove, acceleration_scaling_factor=af)
+            manipulator.set_servo_pose_mode()
+            for pos in poses[1:]:
+                await manipulator.stream_coordinates_async(MoveCoordinatesParamsPosition(*pos), orientation)
+                time.sleep(0.02)
+            manipulator.move_to_coordinates(MoveCoordinatesParamsPosition(*poses[-1][:2], h+0.015), orientation, velocity_scaling_factor=vMove, acceleration_scaling_factor=af)
     except Exception as e:
         print("Error: ", e)
 
