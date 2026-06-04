@@ -24,10 +24,14 @@ af = 0.1
 import csv
 import glob
 import os
+import re
 
 def load_trajectories(folder="trajectory"):
     trajectories = []
-    files = sorted(glob.glob(os.path.join(folder, "*.csv")))
+    base = os.path.dirname(os.path.abspath(__file__))
+    files = sorted(glob.glob(os.path.join(base, folder, "*.csv")),
+               key=lambda f: int(re.search(r'\d+', os.path.basename(f)).group()))
+    print(files)
     for filename in files:
         trajectory = []
         with open(filename, "r") as f:

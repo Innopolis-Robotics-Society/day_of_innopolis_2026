@@ -11,6 +11,10 @@ version = "0.1.0"
 pillow = ">=10.0"
 scikit-image = ">=0.26.0,<0.27"
 matplotlib = ">=3.10.9,<4"
+python = "<=3.13"
 
 [pypi-dependencies]
 opencv-python = ">=4.9"
+pydantic = "==2.11.7"
+paho-mqtt = "==2.1.0"
+pm-python-sdk = {version = "*", index = "https://test.pypi.org/simple/"}
