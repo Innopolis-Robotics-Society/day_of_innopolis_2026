@@ -14,10 +14,14 @@ import soxr
 from vosk import Model, KaldiRecognizer
 import time
 
+# for i, dev in enumerate(sd.query_devices()):
+#     if dev['max_input_channels'] > 0:
+#         print(f"{i}: {dev['name']}  (rate: {int(dev['default_samplerate'])})")
+
 # ─────────────────────────────────────────────
 # Настройки
 # ─────────────────────────────────────────────
-DEVICE_NAME     = "HECATE"          # подстрока имени устройства
+DEVICE_NAME     = 8#"HECATE"          # подстрока имени устройства
 DEVICE_RATE     = 44100             # частота микрофона
 VOSK_RATE       = 16000             # частота Vosk
 BLOCK_SIZE      = 8000 * DEVICE_RATE // VOSK_RATE             # blocksize (DEVICE_RATE * 8000 / VOSK_RATE)
