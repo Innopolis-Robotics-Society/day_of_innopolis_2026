@@ -16,7 +16,7 @@ IMG_WIDTH_MM = 80
 IMG_HEIGHT_MM = 60
 RATIO_X = IMG_WIDTH / IMG_WIDTH_MM *1000 #px/m
 RATIO_Y = IMG_HEIGHT / IMG_HEIGHT_MM *1000 #px/m
-EPS = 0.5/1000 #MM
+EPS = 1/1000 #MM
 
 # ---------- рендер буквы ----------
 img  = Image.new("RGB", (IMG_WIDTH, IMG_HEIGHT), (255, 255, 255))
