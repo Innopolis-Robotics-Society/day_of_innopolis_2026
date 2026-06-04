@@ -10,6 +10,7 @@ FONT_PATH = "ofont.ru_Buira.ttf"
 FONT_SIZE1   = 250
 FONT_SIZE2   = 215
 LETTER_SPACING = 20  # доп. пикселей между буквами line1
+EXTEND_DISTANCE_PX = 15
 IMG_WIDTH = 800
 IMG_HEIGHT = 600
 IMG_WIDTH_MM = 80
@@ -55,7 +56,7 @@ skel    = skeletonize((blurred < 200).astype(np.uint8))
 
 # Обрезаем шпоры: 20 раз удаляем точки с единственным соседом
 s = skel.copy().astype(np.uint8)
-for _ in range(3):
+for _ in range(7):
     nbs = sum(np.roll(np.roll(s, dy, 0), dx, 1)
               for dy in (-1,0,1) for dx in (-1,0,1) if (dy,dx) != (0,0))
     s[nbs == 1] = 0
@@ -236,8 +237,7 @@ print(f"Стало сегментов: {len(segments)}")
 #     print(f"  [{i}] точек: {len(seg)}  {seg[0]} → {seg[-1]}")
 #?
 
-# ? Сортировка сегментов
-
+#  Сортировка сегментов
 import math
 def proj(pt):
     r, c = pt
@@ -270,7 +270,41 @@ path_segments = seg_top + seg_bot
 # (row, col) → (x, y)
 path_segments = [[(int(c), int(r)) for r, c in seg] for seg in path_segments]#[:11]
 # ?
+# ---------- расширение сегментов в обе стороны ----------
+def extend_segment(seg, distance_px):
+    """Экстраполирует сегмент на distance_px пикселей с обоих концов."""
+    if len(seg) < 2:
+        return seg
 
+    def extrapolate_end(pts, dist):
+        skip = 1
+        if len(pts) < skip + 2:
+            inner = pts
+        else:
+            inner = pts[:-skip]
+        look = min(len(inner) - 1, 7)
+        dx = inner[-1][0] - inner[-1 - look][0]
+        dy = inner[-1][1] - inner[-1 - look][1]
+        length = math.hypot(dx, dy)
+        if length == 0:
+            return []
+        ux, uy = dx / length, dy / length
+
+        extra = []
+        x, y = pts[-1]  # стартуем с реального конца
+        traveled = 0.0
+        while traveled < dist:
+            x += ux
+            y += uy
+            traveled += 1.0
+            extra.append((int(round(x)), int(round(y))))
+        return extra
+
+    prefix = extrapolate_end(seg[::-1], distance_px)[::-1]
+    suffix = extrapolate_end(seg, distance_px)
+    return prefix + seg + suffix
+
+path_segments = [extend_segment(seg, EXTEND_DISTANCE_PX) for seg in path_segments]
 
 # ---------- визуализация ----------
 import matplotlib.pyplot as plt
@@ -344,5 +378,5 @@ for idx, trajectory in enumerate(coords_segments):
         writer.writerow(["x", "y"])
         writer.writerows(trajectory)
 # plt.tight_layout()
-plt.show()
+# plt.show()
 # plt.imsave("f.png", ax)
