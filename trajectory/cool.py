@@ -351,8 +351,14 @@ print("\nСтало сегментов:", len(coords_segments))
 #         print(f"x = {i[j][0]}, y = {i[j][1]}")
 #     if len(i) > 10:
 #         print("...")
-cv2.imshow("Сегменты", vis)
-cv2.waitKey(0)
+# cv2.imshow("Сегменты", vis)
+# cv2.waitKey(0)
+plt.figure(figsize=(10, 8))
+plt.imshow(cv2.cvtColor(vis, cv2.COLOR_BGR2RGB))
+plt.title("Сегменты")
+plt.axis("off")
+plt.tight_layout()
+plt.show()
 
 import matplotlib.pyplot as plt
 
