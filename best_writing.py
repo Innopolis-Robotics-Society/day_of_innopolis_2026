@@ -76,7 +76,6 @@ async def make_manipulator_connection():
     try:
         manipulator.connect()
         manipulator.get_control()
-        manipulator.enable_servo_streaming()
         manipulator.move_to_coordinates(MoveCoordinatesParamsPosition(x2, y, h2), orientation2, velocity_scaling_factor=vWrite, acceleration_scaling_factor=af)
         manipulator.move_to_coordinates(MoveCoordinatesParamsPosition(x, y, h2), orientation2, velocity_scaling_factor=vWrite, acceleration_scaling_factor=af)
         manipulator.move_to_coordinates(MoveCoordinatesParamsPosition(x, y, h2), orientation, velocity_scaling_factor=vWrite, acceleration_scaling_factor=af)
@@ -86,7 +85,6 @@ async def make_manipulator_connection():
                 poses.append([poss[i][0] + x, poss[i][1] + y, h])
             manipulator.move_to_coordinates(MoveCoordinatesParamsPosition(*poses[0][:2], h+0.007), orientation, velocity_scaling_factor=vWrite, acceleration_scaling_factor=af)
             manipulator.move_to_coordinates(MoveCoordinatesParamsPosition(*poses[0]), orientation, velocity_scaling_factor=vMove, acceleration_scaling_factor=af)
-            manipulator.set_servo_pose_mode()
             for pos in poses:
                 manipulator.move_to_coordinates(MoveCoordinatesParamsPosition(*pos), orientation, velocity_scaling_factor=vWrite, acceleration_scaling_factor=af)
             manipulator.move_to_coordinates(MoveCoordinatesParamsPosition(*poses[-1][:2], h+0.007), orientation, velocity_scaling_factor=vMove, acceleration_scaling_factor=af)
