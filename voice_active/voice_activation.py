@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """
-Модуль голосовой активации робота.
-Одновременно слушает русский и английский язык.
-Фраза состоит из 3 этапов — каждый этап принимает слова на RU или EN.
+Голосовая активация робота (только русский язык).
+Фраза состоит из 3 этапов.
+
+Внешнее использование:
+    from voice_activator import VoiceActivator
+    ok, transcript = VoiceActivator().listen()
+    # ok == True, transcript == всё услышанное до и включая фразу активации
 """
 
 import queue
@@ -15,173 +19,73 @@ import soxr
 from vosk import Model, KaldiRecognizer
 
 # ─────────────────────────────────────────────
-# Настройки устройства
+# Настройки
 # ─────────────────────────────────────────────
-DEVICE_NAME = 24#"HECATE"
-DEVICE_RATE = 48000
-VOSK_RATE   = 16000
-BLOCK_SIZE  = 8000*DEVICE_RATE//VOSK_RATE
+DEVICE_NAME    = 8          # номер или название устройства
+DEVICE_RATE    = 44100
+VOSK_RATE      = 16000
+BLOCK_SIZE     = 8000 * DEVICE_RATE // VOSK_RATE
 
-MODEL_RU = "model_ru"
-MODEL_EN = "model_en"
-
-# Таймаут между этапами (секунды)
-PHRASE_TIMEOUT = 5.0
+MODEL_PATH     = "model_ru"
+PHRASE_TIMEOUT = 5.0        # секунды между этапами
+MIC_GAIN       = 1.1        # усиление микрофона
 
 # ─────────────────────────────────────────────
-# Фраза: 3 этапа, каждый — набор слов RU и EN
-# Любое слово из набора засчитывается как этап
+# Фраза: 3 этапа — любое слово из набора засчитывается
 # ─────────────────────────────────────────────
 PHRASE_STAGES = [
-    {
-        "ru": {"жду", "что", "что-то"},
-        "en": {"waiting", "wait"},
-        "label": "жду/что | waiting/wait",
-    },
-    {
-        "ru": {"твой", "твоего"},
-        "en": {"your", "toy"},
-        "label": "твой/твоего | your",
-    },
-    {
-        "ru": {"автограф", "автографа", "фотограф", "фотографа"},
-        "en": {"autograph", "october", "target"},
-        "label": "автограф/автографа | autograph",
-    },
+    {"words": {"жду", "что", "что-то"},              "label": "жду / что"},
+    {"words": {"твой", "твоего"},                    "label": "твой / твоего"},
+    {"words": {"автограф", "автографа", "фотограф"}, "label": "автограф / автографа"},
 ]
 
 
 # ─────────────────────────────────────────────
-# Глобальная очередь вывода — один поток пишет
-# ─────────────────────────────────────────────
-_print_queue: queue.Queue = queue.Queue()
-
-def _print_worker():
-    while True:
-        msg = _print_queue.get()
-        if msg is None:
-            break
-        print(msg, flush=True)
-
-_print_thread = threading.Thread(target=_print_worker, daemon=True)
-_print_thread.start()
-
-def log(msg: str):
-    _print_queue.put(msg)
-
-
-# ─────────────────────────────────────────────
-# Callback активации
-# ─────────────────────────────────────────────
-def on_activation(word: str, lang: str):
-    """Замени на отправку сигнала роботу."""
-    log(f"\n🤖 АКТИВАЦИЯ! Слово: '{word}' (язык: {lang})\n")
-
-
-# ─────────────────────────────────────────────
-# Единый детектор фразы (общий для RU и EN)
+# Детектор фразы
 # ─────────────────────────────────────────────
 class PhraseDetector:
     def __init__(self, stages: list, timeout: float):
-        self.stages  = stages
-        self.timeout = timeout
+        self.stages     = stages
+        self.timeout    = timeout
         self._step      = 0
         self._last_time = 0.0
         self._lock      = threading.Lock()
 
-    def feed(self, word: str, lang: str) -> bool:
-        """Передай одно слово и язык. Возвращает True если фраза завершена."""
+    def feed(self, word: str) -> bool:
+        """Передай слово. Возвращает True если фраза завершена."""
         word = word.lower()
         with self._lock:
             now = time.time()
 
-            # Таймаут — сброс если слишком долгая пауза
+            # Сброс по таймауту
             if self._step > 0 and (now - self._last_time) > self.timeout:
-                log(f"  ⏱ Таймаут, сброс на этап 1")
+                print(f"  ⏱ Таймаут, сброс на этап 1", flush=True)
                 self._step = 0
 
-            current_stage = self.stages[self._step]
-
-            # Слово из текущего этапа — переходим дальше
-            if word in current_stage.get(lang, set()):
+            # Слово совпадает с текущим этапом
+            if word in self.stages[self._step]["words"]:
                 self._step += 1
                 self._last_time = now
-                log(f"  ✓ Этап {self._step}/{len(self.stages)} — '{word}' [{lang.upper()}]")
+                print(f"  ✓ Этап {self._step}/{len(self.stages)} — '{word}'", flush=True)
                 if self._step == len(self.stages):
                     self._step = 0
                     return True
                 return False
 
-            # Слово из этапа 1 во время этапа 2 или 3 — засчитываем как этап 1, переходим на этап 2
-            if self._step > 0:
-                for i in range(self._step):
-                    if word in self.stages[i].get(lang, set()):
-                        log(f"  ↺ Слово из этапа {i+1}, перезапуск с этапа {i+2}")
-                        self._step = i + 1
-                        self._last_time = now
-                        break
+            # Слово из более раннего этапа — перезапуск с нужного места
+            for i in range(self._step):
+                if word in self.stages[i]["words"]:
+                    print(f"  ↺ Слово из этапа {i+1}, перезапуск с этапа {i+2}", flush=True)
+                    self._step = i + 1
+                    self._last_time = now
+                    break
 
         return False
 
     def reset(self):
         with self._lock:
-            self._step = 0
+            self._step      = 0
             self._last_time = 0.0
-
-
-# ─────────────────────────────────────────────
-# Поток распознавания одного языка
-# ─────────────────────────────────────────────
-class RecognizerThread(threading.Thread):
-    def __init__(self, model_path: str, lang: str, detector: PhraseDetector):
-        super().__init__(daemon=True)
-        self.lang     = lang
-        self.detector = detector
-        self.audio_queue = queue.Queue()
-        self._stop_event  = threading.Event()
-        self._cooldown    = 2.0
-        self._last_activation = 0.0
-
-        log(f"[{lang}] Загрузка модели: {model_path} ...")
-        self.model = Model(model_path=model_path)
-        self.rec   = KaldiRecognizer(self.model, VOSK_RATE)
-        self.rec.SetWords(True)
-        log(f"[{lang}] Модель загружена.")
-
-    def put_audio(self, data: bytes):
-        self.audio_queue.put(data)
-
-    def stop(self):
-        self._stop_event.set()
-
-    def _process_words(self, text: str, is_partial: bool):
-        for word in text.lower().split():
-            now = time.time()
-            if now - self._last_activation < self._cooldown:
-                continue
-            if self.detector.feed(word, self.lang):
-                self._last_activation = now
-                on_activation(word, self.lang)
-
-    def run(self):
-        while not self._stop_event.is_set():
-            try:
-                data = self.audio_queue.get(timeout=0.5)
-            except queue.Empty:
-                continue
-
-            if self.rec.AcceptWaveform(data):
-                result = json.loads(self.rec.Result())
-                text = result.get("text", "").strip()
-                if text:
-                    log(f"[{self.lang}] {text}")
-                    self._process_words(text, is_partial=False)
-            else:
-                partial = json.loads(self.rec.PartialResult())
-                text = partial.get("partial", "").strip()
-                if text:
-                    log(f"[{self.lang}] ...{text}")
-                    self._process_words(text, is_partial=True)
 
 
 # ─────────────────────────────────────────────
@@ -189,63 +93,117 @@ class RecognizerThread(threading.Thread):
 # ─────────────────────────────────────────────
 class VoiceActivator:
     def __init__(self):
-        self._detector = PhraseDetector(PHRASE_STAGES, PHRASE_TIMEOUT)
-        self.ru = RecognizerThread(MODEL_RU, "ru", self._detector)
-        self.en = RecognizerThread(MODEL_EN, "en", self._detector)
-        self._stream = None
+        print(f"Загрузка модели: {MODEL_PATH} ...", flush=True)
+        self._model = Model(model_path=MODEL_PATH)
+        print("Модель загружена.", flush=True)
 
-    def _audio_callback(self, indata, frames, time, status):
-        if status:
-            log(f"[audio] {status}")
-        audio = np.frombuffer(bytes(indata), dtype=np.int16)
-        resampled = soxr.resample(audio.astype(np.float32), DEVICE_RATE, VOSK_RATE)
-        data = resampled.astype(np.int16).tobytes()
-        self.ru.put_audio(data)
-        self.en.put_audio(data)
+    # ──────────────────────────────────────────
+    # Публичный метод для внешнего использования
+    # ──────────────────────────────────────────
+    def listen(self) -> tuple[bool, str]:
+        """
+        Запускает микрофон и распознавание, блокирует вызывающий поток
+        до момента, когда фраза активации будет услышана.
 
-    def start(self):
-        log("Запуск потоков распознавания...")
-        self.ru.start()
-        self.en.start()
+        Возвращает:
+            (True, transcript) — фраза услышана;
+                                  transcript — всё, что было распознано
+                                  с начала прослушивания включая саму фразу.
 
-        self._stream = sd.RawInputStream(
+        Пример:
+            ok, text = VoiceActivator().listen()
+            print(text)  # "привет что твой автограф пожалуйста"
+        """
+        detector     = PhraseDetector(PHRASE_STAGES, PHRASE_TIMEOUT)
+        rec          = KaldiRecognizer(self._model, VOSK_RATE)
+        rec.SetWords(True)
+
+        audio_queue  = queue.Queue()
+        done_event   = threading.Event()
+        transcript_parts: list[str] = []   # финальные фразы по порядку
+        cooldown     = 2.0
+        last_activation = [0.0]            # список для записи из вложенной функции
+
+        # — аудио-колбэк —————————————————————
+        def _audio_callback(indata, frames, time_info, status):
+            if status:
+                print(f"[audio] {status}", flush=True)
+            audio     = np.frombuffer(bytes(indata), dtype=np.int16)
+            resampled = soxr.resample(audio.astype(np.float32), DEVICE_RATE, VOSK_RATE)
+            amplified = np.clip(resampled * MIC_GAIN, -32768, 32767)
+            audio_queue.put(amplified.astype(np.int16).tobytes())
+
+        # — цикл распознавания ————————————————
+        def _recognize_loop():
+            while not done_event.is_set():
+                try:
+                    data = audio_queue.get(timeout=0.5)
+                except queue.Empty:
+                    continue
+
+                if rec.AcceptWaveform(data):
+                    result = json.loads(rec.Result())
+                    text   = result.get("text", "").strip()
+                    if text:
+                        print(f"[ru] {text}", flush=True)
+                        transcript_parts.append(text)
+                        _check_words(text)
+                else:
+                    partial = json.loads(rec.PartialResult())
+                    text    = partial.get("partial", "").strip()
+                    if text:
+                        print(f"[ru] ...{text}", flush=True)
+                        # партиалы не добавляем в transcript — только для детектора
+                        _check_words(text)
+
+        def _check_words(text: str):
+            for word in text.lower().split():
+                now = time.time()
+                if now - last_activation[0] < cooldown:
+                    continue
+                if detector.feed(word):
+                    last_activation[0] = now
+                    print(f"\n🤖 АКТИВАЦИЯ! Слово: '{word}'\n", flush=True)
+                    done_event.set()
+                    return
+
+        # — запуск ————————————————————————————
+        worker = threading.Thread(target=_recognize_loop, daemon=True)
+        worker.start()
+
+        stream = sd.RawInputStream(
             samplerate=DEVICE_RATE,
             blocksize=BLOCK_SIZE,
             device=DEVICE_NAME,
             dtype="int16",
             channels=1,
-            callback=self._audio_callback,
+            callback=_audio_callback,
         )
-        self._stream.start()
 
-        log("=" * 50)
-        log("Жду фразу по этапам:")
+        print("=" * 50, flush=True)
+        print("Слушаю фразу по этапам:", flush=True)
         for i, stage in enumerate(PHRASE_STAGES):
-            log(f"  Этап {i+1}: {stage['label']}")
-        log(f"Таймаут между этапами: {PHRASE_TIMEOUT}с")
-        log("Ctrl+C для остановки.")
-        log("=" * 50)
+            print(f"  Этап {i+1}: {stage['label']}", flush=True)
+        print(f"Таймаут между этапами: {PHRASE_TIMEOUT}с", flush=True)
+        print("=" * 50, flush=True)
 
-    def stop(self):
-        if self._stream:
-            self._stream.stop()
-            self._stream.close()
-        self.ru.stop()
-        self.en.stop()
-        log("Остановлено.")
+        with stream:
+            done_event.wait()   # ждём активации — поток не занят
+
+        worker.join(timeout=2.0)
+
+        transcript = " ".join(transcript_parts).strip()
+        return True, transcript
 
 
 # ─────────────────────────────────────────────
-# Точка входа
+# Точка входа (для ручного запуска / теста)
 # ─────────────────────────────────────────────
 if __name__ == "__main__":
     activator = VoiceActivator()
     try:
-        activator.start()
-        while True:
-            time.sleep(0.1)
+        ok, text = activator.listen()
+        print(f"\nРезультат: ok={ok}")
+        print(f"Транскрипт: «{text}»")
     except KeyboardInterrupt:
-        print("\nОстановка...")
-    finally:
-        activator.stop()
-        _print_queue.put(None)
+        print("\nОстановка.")
