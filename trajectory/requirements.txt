@@ -1,0 +1,5 @@
+opencv-python>=4.9
+pydantic==2.11.7
+paho-mqtt==2.1.0
+--extra-index-url https://test.pypi.org/simple/
+pm-python-sdk
